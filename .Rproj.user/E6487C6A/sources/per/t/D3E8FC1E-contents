@@ -1,0 +1,507 @@
+## Moran's I Method
+
+#! INSTRUCTIONS - Please read prior to running this script
+# This script automates the workflow for the Moran's I method
+# for identifying employment subcenters in the Chicago MSA.
+# To ensure that the script runs properly, please ensure your file
+# structure matches the file structure below:
+# 
+## * parent_directory (working directory)
+## |  * data
+##    |  * raw
+##    |  * processed
+##    |  * reference
+##       |  * context_layers
+## |  * scripts
+##    |  * R_PositiveResiduals_Dynamic.R -> (this script)
+# 
+# In addition, please ensure that your working directory is set 
+# to the "parent_directory" specified above.
+# 
+# Note that the script is currently configured to be dynamic across
+# different preferences for the unit of analysis (census blocks,
+# census block groups, census tracts). To modify the preferred unit,
+# please edit the "ua.pref" variable in the workspace setup section.
+# 
+# Additionally, the script is currently configured to perform the 
+# analysis for the Chicago MSA. To change this, please note that 
+# the section entitled "Pulling shapefiles for the UA" will require
+# editing. Context layers (in the "context_layers" folder) will also
+# need to be updated to match the analysis region.
+# 
+# INTERNAL Finally, please note that this script uses externally-run GWRs to
+# perform the analysis. To run the GWRs on the same machine that this 
+# script will be running on, please follow these steps:
+#   1. Un-comment lines 299 to 314.
+#   2. Comment out lines 318 to 324.
+
+
+
+#! Setting up workspace
+setwd("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw")
+## Modifying options
+options(scipen = 999)
+options(timeout = 999)
+## Installing and loading required packages
+usePackage <- function(p) {
+  if (!is.element(p, installed.packages()[,1]))
+    install.packages(p, dep = TRUE)
+  require(p, character.only = TRUE)
+}
+usePackage("dplyr")
+usePackage("sf")
+usePackage("e1071")
+usePackage("tigris")
+usePackage("tidyr")
+usePackage("spdep")
+usePackage("ggplot2")
+usePackage("sp")
+usePackage("spgwr")
+usePackage("igraph")
+usePackage("ggpattern")
+usePackage("tidycensus")
+## Setting the preferred unit-of-analysis (UA) (blocks, block groups, or tracts)
+ua.pref = "tracts"
+## "blocks" / "blockgroups" / "tracts"
+
+
+
+#! Pulling shapefiles for the UA
+## If ua = blocks
+if (ua.pref == "blocks") {
+  IL.UA.2021 <- blocks(
+    state = "IL",
+    county = c("Cook County",
+               "DeKalb County",
+               "DuPage County",
+               "Grundy County",
+               "Kane County",
+               "Kendall County",
+               "Lake County",
+               "McHenry County",
+               "Will County"),
+    year = 2021
+  )
+  
+  IN.UA.2021 <- blocks(
+    state = "IN",
+    county = c("Jasper County",
+               "Lake County",
+               "Newton County",
+               "Porter County"),
+    year = 2021
+  )
+  
+  WI.UA.2021 <- blocks(
+    state = "WI",
+    county = c("Kenosha County"),
+    year = 2021
+  )
+}
+
+## If ua = block groups
+if (ua.pref == "blockgroups") {
+  IL.UA.2021 <- block_groups(
+    state = "IL",
+    county = c("Cook County",
+               "DeKalb County",
+               "DuPage County",
+               "Grundy County",
+               "Kane County",
+               "Kendall County",
+               "Lake County",
+               "McHenry County",
+               "Will County"),
+    year = 2021
+  )
+  
+  IN.UA.2021 <- block_groups(
+    state = "IN",
+    county = c("Jasper County",
+               "Lake County",
+               "Newton County",
+               "Porter County"),
+    year = 2021
+  )
+  
+  WI.UA.2021 <- block_groups(
+    state = "WI",
+    county = c("Kenosha County"),
+    year = 2021
+  )
+}
+
+## If ua = tracts
+if (ua.pref == "tracts") {
+  IL.UA.2021 <- tracts(
+    state = "IL",
+    county = c("Cook County",
+               "DeKalb County",
+               "DuPage County",
+               "Grundy County",
+               "Kane County",
+               "Kendall County",
+               "Lake County",
+               "McHenry County",
+               "Will County"),
+    year = 2021
+  )
+  
+  IN.UA.2021 <- tracts(
+    state = "IN",
+    county = c("Jasper County",
+               "Lake County",
+               "Newton County",
+               "Porter County"),
+    year = 2021
+  )
+  
+  WI.UA.2021 <- tracts(
+    state = "WI",
+    county = c("Kenosha County"),
+    year = 2021
+  )
+}
+
+## Combine the three states into the MSA file
+MSA.UA.2021 <- rbind(IL.UA.2021,
+                     IN.UA.2021,
+                     WI.UA.2021) %>%
+  st_transform(crs = 4326)
+
+## Select the necessary columns
+if (ua.pref == "blocks") {
+  MSA.UA.2021 <- MSA.UA.2021 %>%
+    select("GEOID20", "geometry") %>%
+    `colnames<-`(c("GEOID", "geometry"))
+} else if (ua.pref == "blockgroups" | ua.pref == "tracts") {
+  MSA.UA.2021 <- MSA.UA.2021 %>%
+    select("GEOID", "geometry")
+}
+
+## Clear memory
+rm(IL.UA.2021)
+rm(IN.UA.2021)
+rm(WI.UA.2021)
+
+
+
+#! Download LEHD WAC Data
+lehd.baseurl <- "https://lehd.ces.census.gov/data/lodes/LODES8/"
+### Downloading for IL
+download.file(
+  paste0(
+    lehd.baseurl,
+    "il", "/",
+    "wac", "/",
+    "il", "_", 
+    "wac", "_", 
+    "S000", "_",
+    "JT00", "_",
+    "2021", ".csv.gz"
+  ),
+  destfile = "C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw/Illinois_WAC_2021.csv.gz",
+  quiet = T)
+### Downloading for IN
+download.file(
+  paste0(
+    lehd.baseurl,
+    "in", "/",
+    "wac", "/",
+    "in", "_", 
+    "wac", "_", 
+    "S000", "_",
+    "JT00", "_",
+    "2021", ".csv.gz"
+  ),
+  destfile = "C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw/Indiana_WAC_2021.csv.gz",
+  quiet = T)
+### Downloading for WI
+download.file(
+  paste0(
+    lehd.baseurl,
+    "wi", "/",
+    "wac", "/",
+    "wi", "_", 
+    "wac", "_", 
+    "S000", "_",
+    "JT00", "_",
+    "2021", ".csv.gz"
+  ),
+  destfile = "C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw/Wisconsin_WAC_2021.csv.gz",
+  quiet = T)
+
+## Read in and combine the downloaded data
+IL.LEHD.WAC.2021 <- read.csv("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw/Illinois_WAC_2021.csv.gz")
+IN.LEHD.WAC.2021 <- read.csv("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw/Indiana_WAC_2021.csv.gz")
+WI.LEHD.WAC.2021 <- read.csv("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/raw/Wisconsin_WAC_2021.csv.gz")
+MSA.LEHD.WAC.2021 <- rbind(IL.LEHD.WAC.2021, IN.LEHD.WAC.2021, WI.LEHD.WAC.2021)
+
+## Clear memory
+rm(IL.LEHD.WAC.2021)
+rm(IN.LEHD.WAC.2021)
+rm(WI.LEHD.WAC.2021)
+gc()
+
+
+
+#! Join the WAC data to the UA shapefile
+if (ua.pref == "blocks") {
+  MSA.LEHD.WAC.2021 <- MSA.LEHD.WAC.2021 %>%
+    select(w_geocode, C000) %>%
+    mutate(w_geocode = as.character(w_geocode)) %>%
+    `colnames<-`(c("w_geocode", "Jobs"))
+  MSA.UA.2021 <- MSA.UA.2021 %>%
+    left_join(MSA.LEHD.WAC.2021,
+              by = c("GEOID" = "w_geocode")) %>%
+    mutate(Jobs = ifelse(is.na(Jobs), 0, Jobs))
+} else if (ua.pref == "blockgroups") {
+  MSA.LEHD.WAC.2021 <- MSA.LEHD.WAC.2021 %>%
+    select(w_geocode, C000) %>%
+    mutate(w_geocode = as.character(w_geocode)) %>%
+    mutate(w_geocode = substr(w_geocode, 1, 12)) %>%
+    `colnames<-`(c("w_geocode", "Jobs")) %>%
+    group_by(w_geocode) %>%
+    summarize(Jobs = sum(Jobs))
+  MSA.UA.2021 <- MSA.UA.2021 %>%
+    left_join(MSA.LEHD.WAC.2021,
+              by = c("GEOID" = "w_geocode")) %>%
+    mutate(Jobs = ifelse(is.na(Jobs), 0, Jobs))
+} else if (ua.pref == "tracts") {
+  MSA.LEHD.WAC.2021 <- MSA.LEHD.WAC.2021 %>%
+    select(w_geocode, C000) %>%
+    mutate(w_geocode = as.character(w_geocode)) %>%
+    mutate(w_geocode = substr(w_geocode, 1, 11)) %>%
+    `colnames<-`(c("w_geocode", "Jobs")) %>%
+    group_by(w_geocode) %>%
+    summarize(Jobs = sum(Jobs))
+  MSA.UA.2021 <- MSA.UA.2021 %>%
+    left_join(MSA.LEHD.WAC.2021,
+              by = c("GEOID" = "w_geocode")) %>%
+    mutate(Jobs = ifelse(is.na(Jobs), 0, Jobs))
+}
+
+## Clear memory
+rm(MSA.LEHD.WAC.2021)
+
+
+#Moran's I analysis, normalizing with Employment Density 
+# Calculate the area of each tract in square meters
+MSA.UA.2021$area_sqm <- st_area(MSA.UA.2021)
+
+# Create the employment density variable (jobs per square meter)
+MSA.UA.2021$employment_density <- MSA.UA.2021$Jobs / MSA.UA.2021$area_sqm
+summary(MSA.UA.2021$employment_density)
+any(is.na(MSA.UA.2021$employment_density))
+
+# Calculate the 99th percentile value of the employment density variable
+percentile_99 <- quantile(MSA.UA.2021$employment_density, 0.99, na.rm = TRUE)
+
+# Define the percentile threshold (e.g., 99th percentile)
+threshold <- quantile(MSA.UA.2021$employment_density, 0.99)
+
+# Winsorize the employment density by capping at the 99th percentile
+MSA.UA.2021$employment_density <- pmin(MSA.UA.2021$employment_density, threshold)
+
+
+#Global Moran's I
+#First, Identify the number of nearest neighbors for the KNN weighting matrix
+#KNN (K nearest neighbors weighting function)
+# Compute the centroids of the geometries
+centroids <- st_centroid(MSA.UA.2021$geometry)
+
+# Extract the coordinates from the centroids
+coords <- st_coordinates(centroids)
+
+# Create contiguity-based neighbors (Queen)
+queen_neighbors <- poly2nb(MSA.UA.2021, queen = TRUE)
+
+# Get the number of neighbors for each tract
+num_neighbors_queen <- sapply(queen_neighbors, length)
+
+# Calculate the average number of neighbors
+average_neighbors_queen <- mean(num_neighbors_queen)
+print(paste("Average number of neighbors (Queen contiguity):", average_neighbors_queen))
+
+
+# Create the 7-nearest neighbors weighting matrix
+knn_weights <- knearneigh(coords, k = 7)
+knn_listw <- nb2listw(knn2nb(knn_weights))
+
+#Run Global Moran's I
+MSA.UA.2021$employment_density <- as.numeric(MSA.UA.2021$employment_density)
+global_moran <- moran.test(MSA.UA.2021$employment_density, listw = knn_listw)
+
+# Print the results
+print(global_moran)
+
+
+#Local Moran I
+# Create the k-nearest neighbor matrix (k = 7)
+knn_7 <- knearneigh(st_coordinates(st_centroid(MSA.UA.2021)), k = 7)
+
+# Convert to a listw object (spatial weights list). 'W' standardizes the weights
+knn_wt <- nb2listw(knn2nb(knn_7), style = "W")  
+
+
+# Run moran.plot 
+moran.plot.df <- moran.plot(MSA.UA.2021$employment_density, knn_wt)
+
+# Perform Local Moran's I using 7 weighting matrix
+local_moran <- localmoran(MSA.UA.2021$employment_density, knn_wt)
+head(local_moran)
+head(attr(local_moran, "quad"))
+
+#Create a data frame that combines the output of the local moran I
+loc_m <- data.frame(local_moran, attr(local_moran, "quad"))
+head(loc_m)
+names(loc_m)[5] <-"p_val"
+loc_m$row<-1:dim(MSA.UA.2021)[1]
+
+#Create a variable for merging the two data sets
+MSA.UA.2021$row<-1:dim(MSA.UA.2021)[1]
+MSA.UA.2021_2 <- merge(MSA.UA.2021, loc_m, by= "row", all.x=TRUE, sort=FALSE)
+
+
+# Calculate the spatial lag of the employment data
+MSA.UA.2021_2$employment_lag <- lag.listw(knn_wt, MSA.UA.2021_2$employment_density)
+
+plot(MSA.UA.2021_2$employment_density, MSA.UA.2021_2$employment_lag)
+abline(h=mean(MSA.UA.2021_2$employment_density), lty=2)
+abline(v=mean(MSA.UA.2021_2$employment_density), lty=2)
+abline(lm(MSA.UA.2021_2$employment_lag ~ MSA.UA.2021_2$employment_density), lty = 1)
+
+
+# Check summary of p-values
+summary(MSA.UA.2021_2$p_val)
+
+# Identify Clusters
+MSA.UA.2021_2$cluster_type <- ifelse(MSA.UA.2021_2$p_val<0.05, as.character(MSA.UA.2021_2$mean), "Not Significant")
+
+
+#! Preparing map components - reading in context layers
+
+## State Boundaries
+boundary.states <- st_read("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/reference/context_layers/Boundary_States/Boundary_States.shp")
+## County Boundaries
+boundary.counties <- st_read("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/reference/context_layers/Boundary_MSACounties/Boundary_MSACounties.shp")
+## Chicago Boundary
+boundary.chicago <- st_read("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/reference/context_layers/Boundary_Chicago/Boundary_Chicago.shp")
+## Interstates
+msa.interstates <- st_read("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/reference/context_layers/MSA_Interstates/MSA_Interstates.shp")
+## O'Hare Airport
+ohare.airport <- st_read("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/reference/context_layers/ORD_Airport/ORD_Airport.shp")
+## Filtering Subcenters to non-Chicago-intersecting
+# MSA.UA.2021 <- MSA.UA.2021[setdiff(row_number(MSA.UA.2021),
+#                                    as.data.frame(st_intersects(MSA.UA.2021, boundary.chicago))$row.id),]
+
+
+## Mapping with ggplot2
+
+## Identify Unit of Analysis
+if (ua.pref == "blocks") {ua.verbose <- "Census Blocks"}
+if (ua.pref == "blockgroups") {ua.verbose <- "Census Block Groups"}
+if (ua.pref == "tracts") {ua.verbose <- "Census Tracts"}
+
+dev.new()
+ggplot() +
+  ## Significant Clusters with Boundaries (High-High and High-Low)
+  geom_sf(data = subset(MSA.UA.2021_2, cluster_type %in% c("High-High", "High-Low")),
+          aes(fill = cluster_type),
+          color = "black",  # Set boundaries for significant clusters
+          linewidth = 0.1,
+          alpha = 0.75) +
+  
+  ## Insignificant and Low Clusters (Without Boundaries)
+  geom_sf(data = subset(MSA.UA.2021_2, cluster_type %in% c("Not Significant", "Low-Low", "Low-High")),
+          aes(fill = cluster_type),
+          color = "lightgrey",  # Set boundaries for insignificant clusters
+          linewidth = 0.05) +  # No boundaries for insignificant and low clusters
+  
+  ## MSA Interstates
+  geom_sf(data = msa.interstates,
+          aes(fill = "5. Interstates"),
+          color = "black",
+          linetype = "solid",
+          linewidth = 0.2) +
+  
+  ## Chicago boundary (Ensure it is drawn later)
+  geom_sf(data = boundary.chicago,
+          aes(fill = "4. Chicago city"),
+          color = scales::alpha("black", 1),
+          linewidth = 0.325,
+          linetype = "solid",
+          alpha = 0.05) +
+  
+  ## State boundaries (Remove or adjust fill)
+  geom_sf(data = boundary.states,
+          color = scales::alpha("black", 0.75),  # Darker to make more visible
+          linewidth = 0.4,  # Thicker lines
+          fill = NA,  # Ensure no fill to avoid grey overlay
+          alpha = 1) +
+  
+  ## County boundaries (Adjust to avoid overlay)
+  geom_sf(data = boundary.counties,
+          color = scales::alpha("black", 0.3),  # Darker for visibility
+          linewidth = 0.1,  # Increase line thickness
+          fill = NA,  # No fill
+          alpha = 0.05) +  # Full opacity to ensure no blending
+  
+  ## Specify Plot X and Y Limits
+  coord_sf(xlim = c(-89.25, -86.5),
+           ylim = c(40.4, 42.9),
+           expand = FALSE) +
+  
+  ## Specify Colors for Cluster Fill
+  scale_fill_manual(values = c("High-High" = "navy",
+                               "Low-Low" = "lightgrey",
+                               "High-Low" = "lightblue",
+                               "Low-High" = "white",
+                               "Not Significant" = "white",  # Ensure consistent labeling
+                               na.value = "white")) +
+  
+  ## Add Labels for Each State
+  annotate(geom = "text",
+           x = -88.95,
+           y = 42.8,
+           color = "black",
+           size = 8/.pt,
+           label = "Wisconsin") +
+  annotate(geom = "text",
+           x = -88.95,
+           y = 40.5,
+           color = "black",
+           size = 8/.pt,
+           label = "Illinois") +
+  annotate(geom = "text",
+           x = -86.8,
+           y = 40.5,
+           color = "black",
+           size = 8/.pt,
+           label = "Indiana") +
+  ggtitle("Employment Sub-center Identification: Spatial Autocorrelation Method") +
+  labs(fill = "Legend",
+       caption = paste0("Unit of Analysis: ", ua.verbose, " (n Clusters = ", nrow(MSA.UA.2021), ", n UA = ", sum(MSA.UA.2021$Count.UA) ,")")) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.title = element_text(size = 7),
+        plot.caption = element_text(size = 4),
+        legend.key.size = unit(0.25, 'cm'),
+        legend.title = element_text(size = 5),
+        legend.text = element_text(size = 4),
+        legend.key.spacing.y = unit(0.1, "cm"))
+
+
+## Save the map
+ggsave(paste0("C:/UIC/UPP_PhD/USSL/identifying-employment-subcenters/data/processed/LocalMoran_employmentDensity", ua.pref, "_Map.png"),
+       width = 1500,
+       height = 1200,
+       units = "px",
+       dpi = "retina")
