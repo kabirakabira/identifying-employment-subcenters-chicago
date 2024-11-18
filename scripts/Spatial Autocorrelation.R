@@ -32,9 +32,11 @@ MSA.UA.2021 <- MSA.UA.2021 %>%
   mutate(Area.sqm = as.numeric(st_area(.))) %>%
   mutate(Job.Density = Jobs / Area.sqm)
 
-## Winsorize the employment density by capping at the 99th percentile
-MSA.UA.2021$Job.Density <- pmin(MSA.UA.2021$Job.Density, 
-                                quantile(MSA.UA.2021$Job.Density, 0.99))
+## Log-transform the employment density variable
+MSA.UA.2021$Job.Density <- log(MSA.UA.2021$Job.Density)
+MSA.UA.2021$Job.Density <- ifelse(is.infinite(MSA.UA.2021$Job.Density),
+                                 0,
+                                 MSA.UA.2021$Job.Density)
 
 ## Find contiguity-based neighbors (Queen)
 queen.neighbors <- poly2nb(MSA.UA.2021, queen = TRUE)
