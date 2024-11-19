@@ -72,6 +72,7 @@ MSA.UA.2021 <- MSA.UA.2021 %>%
                            NA)) %>%
   filter(Subcenter == "Subcenter") %>%
   filter(Jobs > 0) %>%
+  filter(Category %in% c("High-High", "High-Low")) %>%
   select(GEOID, Jobs, Category, Subcenter, geometry)
 
 #! Clean up and write out final shapefile
