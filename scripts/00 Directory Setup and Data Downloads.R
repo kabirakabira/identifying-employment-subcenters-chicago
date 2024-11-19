@@ -36,12 +36,12 @@ usePackage("openxlsx")
 usePackage("e1071")
 
 #! Create needed directories
-if (!file.exists("data")) {
-  dir.create("data")
-  dir.create("data/raw")
-  dir.create("data/processed")
-  dir.create("data/output")
-}
+unlink("data", recursive = T)
+dir.create("data")
+dir.create("data/raw")
+dir.create("data/processed")
+dir.create("data/output")
+
 
 #! Download MSA Tract boundaries
 IL.UA.2021 <- tracts(

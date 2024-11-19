@@ -33,7 +33,7 @@ MSA.UA.2021 <- MSA.UA.2021 %>%
 
 #! Set Thresholds for Total Jobs and Job Density
 threshold.jobs <- mean(MSA.UA.2021$Jobs, na.rm = T) + sd(MSA.UA.2021$Jobs, na.rm = T)
-threshold.density <- mean(MSA.UA.2021$Job_Density, na.rm = T) + sd(MSA.UA.2021$Job_Density, na.rm = T)
+threshold.density <- mean(MSA.UA.2021$Job_Density, na.rm = T)
 
 #! Determine Subcenters based on thresholds
 MSA.UA.2021 <- MSA.UA.2021 %>%
