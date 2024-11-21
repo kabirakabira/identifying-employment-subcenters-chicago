@@ -104,7 +104,11 @@ MSA.UA.2021 <- MSA.UA.2021 %>%
       DistCBD %in% knot.table$closest_DistCBD,
       "Subcenter",
       "Not a Subcenter"
-    )
+    )) %>%
+  mutate(
+    Subcenter = ifelse(DistCBD == min(DistCBD),
+                       "Subcenter",
+                       Subcenter)
   )
 
 #! Generate Buffers for Mapping
