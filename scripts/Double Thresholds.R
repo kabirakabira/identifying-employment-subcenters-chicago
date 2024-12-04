@@ -43,12 +43,39 @@ MSA.UA.2021 <- MSA.UA.2021 %>%
       "Subcenter",
       "Not a Subcenter"
     )
+  ) %>%
+  filter(Subcenter == "Subcenter")
+
+
+
+#! Dissolve contiguous UAs
+adjacency.matrix <- st_touches(MSA.UA.2021)
+g <- graph_from_adj_list(adjacency.matrix)
+clusters <- components(g)$membership
+
+MSA.UA.2021 <- MSA.UA.2021 %>%
+  mutate(
+    Cluster = clusters,
+    Count = 1
   )
+
+MSA.UA.2021 <- MSA.UA.2021 %>%
+  group_by(Cluster) %>%
+  summarize(
+    geometry = st_union(geometry),
+    Jobs = sum(Jobs),
+    Area_HA = sum(Area_HA),
+    Count.UA = sum(Count)
+  )
+
+MSA.UA.2021 <- MSA.UA.2021 %>%
+  filter(Count.UA > 1) %>%
+  mutate(Job_Density = Jobs / Area_HA)
+
 
 #! Clean up and Write out shapefile
 MSA.UA.2021 <- MSA.UA.2021 %>%
-  select(GEOID, Jobs, Area_HA, Job_Density, Subcenter, geometry) %>%
-  filter(Subcenter == "Subcenter")
+  select(Cluster, Jobs, Area_HA, Job_Density, Count.UA, geometry)
 
 st_write(MSA.UA.2021,
          "data/output/DoubleThresholds_Subcenters.shp")
@@ -57,24 +84,7 @@ st_write(MSA.UA.2021,
 #! Read in Observations DF and update
 observations.df <- read.csv("data/output/observations_df.csv")
 
-## Dissolve contiguous UAs
-adjacency.matrix <- st_touches(MSA.UA.2021)
-g <- graph_from_adj_list(adjacency.matrix)
-clusters <- components(g)$membership
-
-MSA.UA.2021.observational <- MSA.UA.2021 %>%
-  mutate(
-    Cluster = clusters,
-    Count = 1
-  )
-
-MSA.UA.2021.observational <- MSA.UA.2021.observational %>%
-  group_by(Cluster) %>%
-  summarize(
-    geometry = st_union(geometry),
-    Jobs = sum(Jobs),
-    Count.UA = sum(Count)
-  )
+MSA.UA.2021.observational <- MSA.UA.2021
 
 MSA.UA.2021.observational <- MSA.UA.2021.observational %>%
   mutate(Area.HA = as.numeric(st_area(.))) %>%
